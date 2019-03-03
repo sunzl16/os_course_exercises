@@ -18,11 +18,33 @@
 
 - 你理解的对于类似ucore这样需要进程/虚存/文件系统的操作系统，在硬件设计上至少需要有哪些直接的支持？至少应该提供哪些功能的特权指令？
 
+  进程的切换-->时钟中断；虚存管理-->地址映射机制-->MMU等硬件；文件系统-->硬件有稳定的存储介质来保证操作系统的持久性。 对应的，应当提供中断使能，触发软中断等中断相关的，设置内存寻址模式，设置页表等内存管理相关的，执行I/O操作等文件系统相关的特权指令。
+
 - 你理解的x86的实模式和保护模式有什么区别？你认为从实模式切换到保护模式需要注意那些方面？
+
+  **实模式**：只有16位的寻址空间，且没有保护机制。它将整个物理内存看成分段的区域，程序和代码位于不同的区域，但系统程序和用户程序没有区别对待，指针指向真实的物理地址。
+
+  **保护模式**：可以使用32位地址寻址4G空间，有强大的保护机制确保操作系统的安全，以及各个程序之间的安全。提供分页分段的机制，物理地址不能被程序直接访问。还支持优先级机制。
+
+  需要代码段描述符、数据段描述符、堆栈段描述符。填充GDT基地址的数据结构，加载 GDTR。关中断。打开地址线A20。进入保护模式。
 
 - 物理地址、线性地址、逻辑地址的含义分别是什么？它们之间有什么联系？
 
+  **逻辑地址**：应用程序直接使用的地址空间，实模式下由“段基地址+段内偏移”组成，保护模式下由“段选择符+段内偏移”组成。
+
+  **线性地址**：逻辑地址经过分段机制称谓线性地址；如果不启动分页，线性地址等于物理地址。
+
+  **物理地址**：线性地址经过分页管理，称为物理地址。
+
 - 你理解的risc-v的特权模式有什么区别？不同 模式在地址访问方面有何特征？
+
+  RISC-V有特权模式：Machine(M-mode)、Supervisor(S-mode)、User(U-mode)。支持三种组合：
+
+  - {M}，简单的嵌入式系统，直接寻址，最底程度的内存保护，信任应用程序代码，实现开销更低。
+  - {M,U}，带保护的简单的嵌入式系统，直接寻址，需要一定的机制保护物理内存，程序跑在U-mode上，而M-mode上的代码依旧值得信任
+  - {M,S,U}，跑在UNIX-like上的系统，S-mode提供虚拟地址，不能直接寻址，内存被分页，每页4Kb，S-mode的代码是不值得信任的。
+
+  [参考资料](https://riscv.org/wp-content/uploads/2017/05/Tue1000-riscv-privileged.pdf)
 
 - 理解ucore中list_entry双向链表数据结构及其4个基本操作函数和ucore中一些基于它的代码实现（此题不用填写内容）
 
@@ -30,15 +52,15 @@
 ```
  /* Gate descriptors for interrupts and traps */
  struct gatedesc {
-    unsigned gd_off_15_0 : 16;        // low 16 bits of offset in segment
-    unsigned gd_ss : 16;            // segment selector
-    unsigned gd_args : 5;            // # args, 0 for interrupt/trap gates
-    unsigned gd_rsv1 : 3;            // reserved(should be zero I guess)
-    unsigned gd_type : 4;            // type(STS_{TG,IG32,TG32})
+    unsigned gd_off_15_0 : 16;        // low 16 bits of offset in segment，段偏移的低16位
+    unsigned gd_ss : 16;            // segment selector，段选择符
+    unsigned gd_args : 5;            // # args, 0 for interrupt/trap gates，参数，占5位
+    unsigned gd_rsv1 : 3;            // reserved(should be zero I guess)，保留空间，占3位
+    unsigned gd_type : 4;            // type(STS_{TG,IG32,TG32})，类型，占4位
     unsigned gd_s : 1;                // must be 0 (system)
-    unsigned gd_dpl : 2;            // descriptor(meaning new) privilege level
+    unsigned gd_dpl : 2;            // descriptor(meaning new) privilege level，描述符号优先级
     unsigned gd_p : 1;                // Present
-    unsigned gd_off_31_16 : 16;        // high bits of offset in segment
+    unsigned gd_off_31_16 : 16;        // high bits of offset in segment，段偏移的高16位
  };
 ```
 
@@ -65,11 +87,40 @@ SETGATE(intr, 1,2,3,0);
 ```
 请问执行上述指令后， intr的值是多少？
 
+intr = 0x00010002
+
 ### 课堂实践练习
 
 #### 练习一
 
 1. 请在ucore中找一段你认为难度适当的AT&T格式X86汇编代码，尝试解释其含义。
+
+   ```
+   seta20.1:
+       inb $0x64, %al
+       testb $0x2, %al
+       jnz seta20.1
+   
+       movb $0xd1, %al
+       outb %al, $0x64
+   
+   seta20.2:
+       inb $0x64, %al
+       testb $0x2, %al
+       jnz seta20.2
+   
+       movb $0xdf, %al
+       outb %al, $0x60
+   
+       lgdt gdtdesc
+       movl %cr0, %eax
+       orl $CR0_PE_ON, %eax
+       movl %eax, %cr0
+   ```
+
+   当BIOS启动的时候，需要打开地址线A20，上面这段程序就是在做这件事情。前三行利用busy-waiting的方法，不断检查8042输入缓存区是否为空，确定空闲之后，将0xd1放入0x64端口，表示写数据进入8042的P2端口。然后利用bush-waiting的方式，等待8042输入缓存区空闲，然后将0xdf写入0x60接口，表示置P2的A20位为1，即打开地址线A20。
+
+   
 
 2. (option)请在rcore中找一段你认为难度适当的RV汇编代码，尝试解释其含义。
 
@@ -77,6 +128,9 @@ SETGATE(intr, 1,2,3,0);
 
 宏定义和引用在内核代码中很常用。请枚举ucore或rcore中宏定义的用途，并举例描述其含义。
 
++ 进行复杂数据结构中的数据访问；
++ 进行数据类型转换；如 `to_struct`
++ 常用功能的代码片段优化；如 `ROUNDDOWN`, `SetPageDirty`
 
 ## 问答题
 
