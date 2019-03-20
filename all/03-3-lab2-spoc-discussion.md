@@ -20,11 +20,23 @@ NOTICE
 
 1. X86有几个特权级？
 
+   0、1、2、3总共四个特权级。
+
+   操作系统内核在0特权级。
+
+   应用程序在3特权级。
+
 
 2. 不同特权级有什么区别？
 
+   特权指令只有ring 0可以使用；一条指令在不同特权级下可以访问的数据范围时不同的；所以一条指令在不同特权级下的行为是不一样的。
+
 
 3. 请说明CPL、DPL和RPL在中断响应、函数调用和指令执行时的作用。
+
+   中断、陷入访问门时：CPL<=DPL[门] & CPL>=DPL[段]，门机制使得从低优先级代码访问高优先级服务
+
+   访问段时：max(CPL,RPL)<+DPL[段]，从高优先级代码访问低优先级数据
 
 
 4. 写一个示例程序，完成4个特权级间的函数调用和数据访问时特权级控制的作用。
@@ -32,12 +44,25 @@ NOTICE
 ### 7.2 了解特权级切换过程
 
 1. 一条指令在执行时会有哪些可能的特权级判断？
+
+   + 当在数据段中访问操作数时，数据段的段选择子必须加载到数据段寄存器中 (DS,ES,FS or GS) ，在处理器将段选择子加载到段寄存器之前，一定会进行特权级检查。所以，当一段程序或者代码从别的程序处接收到一个数据段选择子，一定会有特权级检查。
+   + 当堆栈段的段选择子加载到堆栈段寄存器(SS)之前，一定会进行特权级检查。
+   + 当在程序控制权从一个代码段转移到另一个代码段时，目标代码段的段选择子会被加载到代码段寄存器(CS)中来。在处理器在这个过程中会执行各种各样的限制、类型以及特权级检查。当这些检查全部通过时，CS寄存器完成加载，程序控制权转移到新的代码段，程序开始从EIP寄存器指向的位置执行。包括JMP, CALL, SYSENTER, SYSEXIT, SYSCALL, SYSRET, INT n, IRET指令，还有中断和异常机制，都会触发如上的特权级检查。
+
+   
+
 2. 在什么情况下会出现特权级切换？
+
+   出现异常、中断而访问门时。
 
 3. int指令在ring0和ring3的执行行为有什么不同？
 
+   压栈内容不同，ring3执行int指令时，会多压入SS和ESP中的值。并且要进行栈切换。
+
 
 4. 如何利用int和iret指令完成不同特权级的切换？
+
+   通过软件构造好需要的栈结构，然后通过int和iret指令进行切换。
 
 
 5. TSS和Task Register的作用是什么？
@@ -53,7 +78,7 @@ NOTICE
 
 ### 7.4 了解UCORE建立段/页表
 
-1. 分析MMU的使能过程，尽可能详细地分析在执行进入保护械的代码“movl %eax, %cr0 ; ljmp $CODE_SEL, $0x0”时，CPU的状态和寄存器内容的变化。
+1. 分析MMU的使能过程，尽可能详细地分析在执行进入保护械的代码“movl %eax, %cr0 ; ljmp $CODE_SEL, ​$0x0”时，CPU的状态和寄存器内容的变化。
 
 2. 分析页表的建立过程；
 
@@ -76,6 +101,27 @@ x86保护模式中权限管理无处不在，下面哪些时候要检查访问�
 ---
 
 （1）（spoc）请用lab1实验的基准代码（即没有修改的需要填空的源代码）来做如下实验： 执行`make qemu`，会得到一个输出结果，请给出合理的解释：为何qemu退出了？【提示】需要对qemu增加一些用于显示执行过程的参数，重点是分析其执行的指令和产生的中断或异常。 可试试"qemu-system-i386  -d help"
+
+```
+kernel panic at kern/mm/default_pmm.c:277:
+    assertion failed: (p0 = alloc_page()) == p2 - 1
+stack trackback:
+ebp:0xc0116ee8 eip:0xc0100a72 args:0xc011af1c 0xc011af1c 0x00000000 0xc0116f1c 
+    kern/debug/kdebug.c:308: print_stackframe+21
+ebp:0xc0116f08 eip:0xc0100445 args:0xc0106693 0x00000115 0xc010667e 0xc010696a 
+    kern/debug/panic.c:27: __panic+107
+ebp:0xc0116fa8 eip:0xc0104c94 args:0x00010094 0x0000807c 0xc0116fd8 0xc01031ac 
+    kern/mm/default_pmm.c:277: default_check+992
+ebp:0xc0116fb8 eip:0xc01033c7 args:0x00000000 0xc0100036 0xffff0000 0xc0118000 
+    kern/mm/pmm.c:458: check_alloc_page+15
+ebp:0xc0116fd8 eip:0xc01031ac args:0x00000000 0x00000000 0x00000000 0xc0105900 
+    kern/mm/pmm.c:292: pmm_init+73
+ebp:0xc0116ff8 eip:0xc010008b args:0xc0105afc 0xc0105b04 0xc0100cf7 0xc0105b23 
+    kern/init/init.c:31: kern_init+84
+Welcome to the kernel debug monitor!!
+Type 'help' for a list of commands.
+
+```
 
 
 （2）\(spoc\)假定你已经完成了lab1的实验,接下来是对lab1的中断处理的回顾：请把你的学号对37\(十进制\)取模，得到一个数x（x的范围是-1&lt;x&lt;37），然后在你的答案的基础上，修init.c中的kern\_init函数，在大约36行处，即
